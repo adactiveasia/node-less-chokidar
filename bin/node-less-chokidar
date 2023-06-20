@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 
-import { EventEmitter as Emitter } from 'events';
+const Emitter = require('events').EventEmitter;
 
-import { watch as _watch } from 'chokidar';
-import { forEach } from 'async-foreach';
-import { resolve, join, dirname, basename, extname } from 'path';
-import glob from 'glob';
-import { format } from 'util';
-import meow from 'meow';
-import { statSync, readFile, writeFileSync } from 'fs';
-import stdout, { write } from 'stdout-stream';
+const chokidar = require('chokidar');
+const forEach = require('async-foreach').forEach;
+const path = require('path');
+const glob = require('glob');
+const util = require('util');
+const meow = require('meow');
+const fs = require('fs');
+const stdout = require('stdout-stream');
 
-import { render } from 'less';
+const less = require('less');
 
 const cli = meow(
 	`
@@ -54,8 +54,8 @@ const cli = meow(
 const isDirectory = filePath => {
 	let isDir = false;
 	try {
-		const absolutePath = resolve(filePath);
-		isDir = statSync(absolutePath).isDirectory();
+		const absolutePath = path.resolve(filePath);
+		isDir = fs.statSync(absolutePath).isDirectory();
 	} catch (e) {
 		isDir = e.code === 'ENOENT';
 	}
@@ -66,11 +66,11 @@ const getOptions = (args, options) => {
 	options.src = args[0];
 
 	if (args[1]) {
-		options.dest = resolve(args[1]);
+		options.dest = path.resolve(args[1]);
 	} else if (options.output) {
-		options.dest = join(
-			dirname(options.src),
-			[basename(options.src, extname(options.src)), '.css'].join('')
+		options.dest = path.join(
+			path.dirname(options.src),
+			[path.basename(options.src, path.extname(options.src)), '.css'].join('')
 		); // replace ext.
 	}
 
@@ -93,7 +93,7 @@ const initializeOptions = options => {
 		// this approach copied from lessc
 		// https://github.com/less/less.js/blob/3.x/bin/lessc#L424
 		paths = paths.concat(
-			options.includePath.map(d => resolve(process.cwd(), d))
+			options.includePath.map(d => path.resolve(process.cwd(), d))
 		);
 	}
 
@@ -120,35 +120,36 @@ const getEmitter = () => {
 		console.warn(data);
 	});
 
-	emitter.on('log', write.bind(stdout));
+	emitter.on('log', stdout.write.bind(stdout));
 
 	return emitter;
 };
 
 const renderFile = (file, options, emitter, done) => {
-	options = getOptions([resolve(file)], options);
+	options = getOptions([path.resolve(file)], options);
 	if (options.watch) {
-		emitter.emit('warn', format('=> changed: %s', file));
+		emitter.emit('warn', util.format('=> changed: %s', file));
 	}
-	readFile(file, 'utf8', (e, lessInput) => {
+	fs.readFile(file, 'utf8', (e, lessInput) => {
 		if (e) {
 			console.log('err', e);
-			emitter.emit('error', format('Error while accessing %s.', file));
+			emitter.emit('error', util.format('Error while accessing %s.', file));
 			throw new Error(e);
 		}
 		const lessOpts = {
-			paths: ['.', dirname(options.src)].concat(options.paths),
+			paths: ['.', path.dirname(options.src)].concat(options.paths),
 			sourceMap: {},
 			javascriptEnabled: !!options.js
 		};
 		if (options.skipSourceMap) {
 			delete lessOpts.sourceMap;
 		}
-		render(lessInput, lessOpts)
+		less
+			.render(lessInput, lessOpts)
 			.then(output => {
-				writeFileSync(options.dest, output.css);
+				fs.writeFileSync(options.dest, output.css);
 				if (output.map) {
-					writeFileSync(`${options.dest}.map`, output.map);
+					fs.writeFileSync(`${options.dest}.map`, output.map);
 				}
 			})
 			.catch(err => {
@@ -161,12 +162,12 @@ const renderFile = (file, options, emitter, done) => {
 };
 
 const renderDir = (options, emitter) => {
-	const globPath = resolve(options.directory, '**/*.less');
+	const globPath = path.resolve(options.directory, '**/*.less');
 	glob(globPath, { follow: true }, (err, files) => {
 		if (err) {
 			return emitter.emit(
 				'error',
-				format(
+				util.format(
 					'You do not have permission to access this path: %s.',
 					err.path
 				)
@@ -181,10 +182,10 @@ const renderDir = (options, emitter) => {
 				renderFile(subject, options, emitter, this.async());
 			},
 			(successful, arr) => {
-				const outputDir = join(process.cwd(), options.output);
+				const outputDir = path.join(process.cwd(), options.output);
 				emitter.emit(
 					'warn',
-					format('Wrote %s CSS files to %s', arr.length, outputDir)
+					util.format('Wrote %s CSS files to %s', arr.length, outputDir)
 				);
 				process.exit();
 			}
@@ -195,12 +196,12 @@ const renderDir = (options, emitter) => {
 const watch = (options, emitter) => {
 	let paths;
 	if (options.directory) {
-		paths = resolve(options.directory, '**/*.less');
+		paths = path.resolve(options.directory, '**/*.less');
 	} else {
 		paths = options.src;
 	}
 
-	const watcher = _watch(paths);
+	const watcher = chokidar.watch(paths);
 
 	watcher.on('error', function(error) {
 		emitter.emit.bind(emitter, 'error');
@@ -214,7 +215,7 @@ const watch = (options, emitter) => {
 		 */
 
 		files.forEach(function(file) {
-			if (basename(file)[0] !== '_') {
+			if (path.basename(file)[0] !== '_') {
 				renderFile(file, options, emitter);
 			}
 		});
